@@ -3,7 +3,15 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+import matplotlib
+
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from matplotlib.figure import Figure
+
 from getDataFunction import _TIMEFRAME_MAP, get_daily_prices
+from pcaAnalysis import run_pca
 from storage import load_portfolio, save_portfolio
 
 TIMEFRAMES = list(_TIMEFRAME_MAP.keys())
@@ -21,8 +29,10 @@ class Dashboard(tk.Tk):
         self._queue = queue.Queue()
 
         self._build_status_bar()
+        self._build_main_area()
         self._build_search_row()
         self._build_results_area()
+        self._build_analysis_area()
 
         self._load_saved_portfolio()
 
@@ -37,6 +47,15 @@ class Dashboard(tk.Tk):
     STATUS_IDLE_COLOR = "#2ecc71"
     STATUS_BUSY_COLOR = "#e74c3c"
 
+    COLOR_SURFACE = "#fcfcfb"
+    COLOR_PRIMARY_INK = "#0b0b0b"
+    COLOR_MUTED_INK = "#898781"
+    COLOR_GRIDLINE = "#e1e0d9"
+    COLOR_SEQUENTIAL = "#2a78d6"
+    COLOR_DIVERGING_NEG = "#e34948"
+    COLOR_DIVERGING_MID = "#f0efec"
+    COLOR_DIVERGING_POS = "#2a78d6"
+
     def _build_status_bar(self):
         self.status_bar = tk.Frame(
             self, height=5, bg=self.STATUS_IDLE_COLOR, highlightthickness=0, bd=0
@@ -44,8 +63,18 @@ class Dashboard(tk.Tk):
         self.status_bar.pack(fill="x", side="top")
         self.status_bar.pack_propagate(False)
 
+    def _build_main_area(self):
+        main = tk.Frame(self)
+        main.pack(fill="both", expand=True)
+
+        self.left_frame = tk.Frame(main)
+        self.left_frame.pack(side="left", fill="both", expand=True)
+
+        self.right_frame = tk.Frame(main)
+        self.right_frame.pack(side="left", fill="both", expand=True)
+
     def _build_search_row(self):
-        row = tk.Frame(self)
+        row = tk.Frame(self.left_frame)
         row.pack(fill="x", padx=15, pady=(15, 10))
 
         self.search_var = tk.StringVar()
@@ -64,11 +93,127 @@ class Dashboard(tk.Tk):
         timeframe_dropdown.pack(side="left", padx=(10, 0))
 
     def _build_results_area(self):
-        container = tk.Frame(self, relief="solid", borderwidth=1)
+        container = tk.Frame(self.left_frame, relief="solid", borderwidth=1)
         container.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
         self.results_frame = tk.Frame(container)
         self.results_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def _build_analysis_area(self):
+        matrix_container = tk.LabelFrame(self.right_frame, text="PCA Loadings")
+        matrix_container.pack(fill="both", expand=True, padx=(0, 15), pady=(15, 10))
+
+        self.matrix_frame = tk.Frame(matrix_container)
+        self.matrix_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        chart_container = tk.LabelFrame(self.right_frame, text="Explained Variance")
+        chart_container.pack(fill="both", expand=True, padx=(0, 15), pady=(0, 15))
+
+        self.chart_frame = tk.Frame(chart_container)
+        self.chart_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def _update_analysis(self):
+        for widget in self.matrix_frame.winfo_children():
+            widget.destroy()
+        for widget in self.chart_frame.winfo_children():
+            widget.destroy()
+
+        if len(self.results_data) < 2:
+            message = "Add at least 2 tickers to run PCA."
+            tk.Label(self.matrix_frame, text=message, fg=self.COLOR_MUTED_INK).pack(
+                expand=True
+            )
+            tk.Label(self.chart_frame, text=message, fg=self.COLOR_MUTED_INK).pack(
+                expand=True
+            )
+            return
+
+        try:
+            results = run_pca()
+        except Exception as exc:
+            message = f"PCA failed: {exc}"
+            tk.Label(
+                self.matrix_frame, text=message, fg=self.COLOR_MUTED_INK, wraplength=280
+            ).pack(expand=True)
+            tk.Label(
+                self.chart_frame, text=message, fg=self.COLOR_MUTED_INK, wraplength=280
+            ).pack(expand=True)
+            return
+
+        self._draw_loading_matrix(results)
+        self._draw_variance_chart(results)
+
+    def _draw_loading_matrix(self, results):
+        tickers = results["tickers"]
+        loadings = results["loading_matrix"]
+        n_tickers, n_pcs = loadings.shape
+        pc_labels = [f"PC{i + 1}" for i in range(n_pcs)]
+
+        fig = Figure(figsize=(4, 3), dpi=100, facecolor=self.COLOR_SURFACE)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(self.COLOR_SURFACE)
+
+        cmap = LinearSegmentedColormap.from_list(
+            "diverging",
+            [self.COLOR_DIVERGING_NEG, self.COLOR_DIVERGING_MID, self.COLOR_DIVERGING_POS],
+        )
+        norm = TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
+        ax.imshow(loadings, cmap=cmap, norm=norm, aspect="auto")
+
+        ax.set_xticks(range(n_pcs))
+        ax.set_xticklabels(pc_labels, color=self.COLOR_MUTED_INK, fontsize=8)
+        ax.set_yticks(range(n_tickers))
+        ax.set_yticklabels(tickers, color=self.COLOR_MUTED_INK, fontsize=8)
+        ax.tick_params(length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        for i in range(n_tickers):
+            for j in range(n_pcs):
+                value = loadings[i, j]
+                text_color = self.COLOR_PRIMARY_INK if abs(value) < 0.6 else "#ffffff"
+                ax.text(
+                    j, i, f"{value:.2f}", ha="center", va="center",
+                    fontsize=7, color=text_color,
+                )
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=self.matrix_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _draw_variance_chart(self, results):
+        evr = results["evr"]
+        pc_labels = [f"PC{i + 1}" for i in range(len(evr))]
+
+        fig = Figure(figsize=(4, 3), dpi=100, facecolor=self.COLOR_SURFACE)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(self.COLOR_SURFACE)
+
+        bars = ax.bar(pc_labels, evr * 100, color=self.COLOR_SEQUENTIAL, width=0.6)
+        ax.set_ylabel("Variance explained (%)", color=self.COLOR_MUTED_INK, fontsize=8)
+        ax.tick_params(colors=self.COLOR_MUTED_INK, labelsize=8, length=0)
+        ax.yaxis.grid(True, color=self.COLOR_GRIDLINE, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for spine in ("top", "right", "left"):
+            ax.spines[spine].set_visible(False)
+        ax.spines["bottom"].set_color(self.COLOR_GRIDLINE)
+
+        for bar, value in zip(bars, evr):
+            ax.annotate(
+                f"{value * 100:.1f}%",
+                xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                fontsize=7,
+                color=self.COLOR_PRIMARY_INK,
+            )
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def _on_search_enter(self, event=None):
         ticker = self.search_var.get().strip().upper()
@@ -125,9 +270,12 @@ class Dashboard(tk.Tk):
             self.timeframes.pop(ticker, None)
             save_portfolio(self.results_data, self.timeframes)
             row.destroy()
+            self._update_analysis()
 
         delete_btn = tk.Button(row, text="Delete", command=on_delete)
         delete_btn.pack(side="right")
+
+        self._update_analysis()
 
 
 if __name__ == "__main__":
