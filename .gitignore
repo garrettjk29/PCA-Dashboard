@@ -8,3 +8,6 @@ env/
 *.egg-info/
 .ipynb_checkpoints/
 .DS_Store
+portfolio_prices.csv
+portfolio_timeframes.csv
+
