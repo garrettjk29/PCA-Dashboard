@@ -67,12 +67,5 @@ Add at least two tickers via the search bar to trigger a PCA run — the loading
 
 ## Known limitations
 
-- `run_pca()` currently reads from `portfolio_prices.csv` on disk by default rather than accepting a returns DataFrame directly — convenient for the dashboard's use case, but couples the analysis function to file state. A cleaner version would take the price data as a parameter and use the CSV path only as a fallback.
-- No handling yet for tickers with mismatched date ranges beyond a basic dropna — partial-history assets currently just shrink the usable date window.
-- No automated tests on the PCA math (planned: check against `sklearn.PCA` output on synthetic data as a correctness sanity check).
+- No handling yet for tickers with mismatched date ranges beyond a basic dropna, partial-history assets currently just shrink the usable date window.
 
-## Roadmap
-
-- [ ] Add LaTeX derivation (`derivation.pdf`) covering the eigendecomposition and loading-matrix proof
-- [ ] Decouple `run_pca()` from disk state
-- [ ] Unit tests validating eigenvalues/EVR against `sklearn.decomposition.PCA` on synthetic data
