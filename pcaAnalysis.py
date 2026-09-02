@@ -27,9 +27,27 @@ def run_pca(returns_df=None, csv_path="portfolio_prices.csv"):
     R = returns_df.values
     T, N = R.shape
 
+    if T <= N:
+        raise ValueError(
+            f"Not enough observations for PCA: {T} observations for {N} tickers. "
+            f"Need more observations than tickers (T > N) -- widen the date window "
+            f"or use fewer tickers."
+        )
+
     #Centering data
     R_bar = R.mean(axis=0)
     Rc = R - R_bar
+
+    #Guard against near-zero-variance tickers, which would produce a divide-by-zero
+    #(NaN) in the loading matrix below.
+    stock_var = Rc.var(axis=0, ddof=1)
+    zero_var = stock_var < 1e-12
+    if zero_var.any():
+        offenders = ", ".join(t for t, bad in zip(tickers, zero_var) if bad)
+        raise ValueError(
+            f"Near-zero variance in the selected window for: {offenders}. "
+            f"PCA loadings are undefined when a ticker's returns don't vary."
+        )
 
     #Covariance Matrix Σ = 1/(T-1) * Rc^T Rc
     Sigma = (Rc.T @ Rc) / (T-1)
@@ -53,14 +71,13 @@ def run_pca(returns_df=None, csv_path="portfolio_prices.csv"):
     evr = eigvals / eigvals.sum()
 
     #Loading Matrix corr(Rj, PCk)
-    stock_var = Rc.var(axis=0, ddof = 1)
-
     loading_matrix = Q * np.sqrt(eigvals / stock_var[:, None])
 
     return {
         "tickers": tickers,
         "evr": evr,
         "loading_matrix": loading_matrix,
+        "pc_scores": Z,
     }
 
 if __name__ == "__main__":

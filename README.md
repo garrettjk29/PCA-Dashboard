@@ -52,7 +52,7 @@ This is the standard PCA loading definition (as opposed to raw eigenvector weigh
 | `dashboard.py` | Tkinter GUI: search/add tickers, async fetch via background thread + queue, renders loading-matrix heatmap and explained-variance bar chart |
 | `getDataFunction.py` | Fetches daily price history for a given ticker/timeframe |
 | `pcaAnalysis.py` | Pure PCA logic — covariance, eigendecomposition, loadings. No UI dependencies, so it can be run or tested standalone |
-| `storage.py` | Persists fetched prices to `portfolio_prices.csv` / `portfolio_timeframes.csv` so the portfolio survives restarts |
+| `storage.py` | Persists fetched prices to `portfolio_prices.csv` so the portfolio survives restarts |
 
 Data flows one direction: `dashboard.py` → `getDataFunction.py` → `storage.py` (cache) → `pcaAnalysis.py` (reads the cache) → back to `dashboard.py` for rendering. Keeping `pcaAnalysis.py` free of UI code means the math can be verified independently of the GUI.
 
@@ -68,4 +68,6 @@ Add at least two tickers via the search bar to trigger a PCA run — the loading
 ## Known limitations
 
 - No handling yet for tickers with mismatched date ranges beyond a basic dropna, partial-history assets currently just shrink the usable date window.
+- If the selected date window has fewer observations than tickers, PCA is underdetermined and `run_pca()` raises a `ValueError` instead of running.
+- If any ticker has near-zero return variance in the selected window, `run_pca()` raises a `ValueError` naming that ticker instead of producing NaN loadings.
 
