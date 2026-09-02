@@ -1,6 +1,6 @@
 """Local persistence for the dashboard's saved tickers.
 
-Keeps the last-fetched price data on disk as plain CSV files (instead of a
+Keeps the last-fetched price data on disk as a plain CSV file (instead of a
 pickle) so:
   - you can open portfolio_prices.csv directly in Excel/a text editor to see
     the data, and
@@ -11,9 +11,8 @@ Usage from another file:
 
     from storage import load_portfolio
 
-    prices, timeframes = load_portfolio()
+    prices = load_portfolio()
     # prices: dict[ticker -> pandas Series of daily closes, indexed by date]
-    # timeframes: dict[ticker -> timeframe string it was fetched with]
 
 To load the raw table for PCA yourself:
 
@@ -26,11 +25,10 @@ from pathlib import Path
 import pandas as pd
 
 PRICES_FILE = Path(__file__).resolve().parent / "portfolio_prices.csv"
-TIMEFRAMES_FILE = Path(__file__).resolve().parent / "portfolio_timeframes.csv"
 
 
-def save_portfolio(prices: dict, timeframes: dict) -> None:
-    """Persist the current ticker -> price data (and timeframe used) to disk."""
+def save_portfolio(prices: dict) -> None:
+    """Persist the current ticker -> price data to disk."""
     if prices:
         df = pd.DataFrame(prices)
         df.index.name = "Date"
@@ -38,21 +36,12 @@ def save_portfolio(prices: dict, timeframes: dict) -> None:
     elif PRICES_FILE.exists():
         PRICES_FILE.unlink()
 
-    pd.Series(timeframes, dtype=str, name="timeframe").to_csv(
-        TIMEFRAMES_FILE, index_label="ticker"
-    )
 
-
-def load_portfolio() -> tuple[dict, dict]:
-    """Load previously saved ticker -> price data. Returns ({}, {}) if none exists."""
+def load_portfolio() -> dict:
+    """Load previously saved ticker -> price data. Returns {} if none exists."""
     prices = {}
     if PRICES_FILE.exists():
         df = pd.read_csv(PRICES_FILE, index_col=0, parse_dates=True)
         prices = {ticker: df[ticker].dropna() for ticker in df.columns}
 
-    timeframes = {}
-    if TIMEFRAMES_FILE.exists():
-        tf = pd.read_csv(TIMEFRAMES_FILE, index_col="ticker")["timeframe"]
-        timeframes = tf.to_dict()
-
-    return prices, timeframes
+    return prices

@@ -2,21 +2,26 @@ import pandas as pd
 import numpy as np
 
 
-def run_pca(returns_df=None, csv_path="portfolio_prices.csv"):
-    """Run PCA on a returns DataFrame.
+def prices_to_returns(prices_df):
+    
+    prices_df = prices_df.dropna() #keep only dates every ticker has data for
 
-    If returns_df is None, prices are read from csv_path, NaN dates are
-    dropped, and log returns are computed to build the returns DataFrame.
-    If returns_df is passed in directly, it is used as-is (it must already
-    be a returns DataFrame, not raw prices) and the file read / log-return
-    step is skipped entirely.
-    """
+    #Logarithmic Returns, R_tj = ln(P_tj / P(t-1)j)
+    return np.log(prices_df / prices_df.shift(1)).dropna()
+
+
+def build_returns_df(prices):
+    
+    combined = pd.DataFrame(prices)
+    combined.index.name = "Date"
+    return prices_to_returns(combined)
+
+
+def run_pca(returns_df=None, csv_path="portfolio_prices.csv"):
+   
     if returns_df is None:
         df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
-        df = df.dropna() #remove empty dates
-
-        #Logarithmic Returns, R_tj = ln(P_tj / P(t-1)j)
-        returns_df = np.log(df / df.shift(1)).dropna()
+        returns_df = prices_to_returns(df)
 
     tickers = returns_df.columns.tolist()
     R = returns_df.values

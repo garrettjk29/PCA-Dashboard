@@ -1,20 +1,22 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 import matplotlib
+import pandas as pd
 
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.figure import Figure
 
-from getDataFunction import _TIMEFRAME_MAP, get_daily_prices
-from pcaAnalysis import run_pca
+from getDataFunction import get_daily_prices
+from pcaAnalysis import build_returns_df, run_pca
 from storage import load_portfolio, save_portfolio
 
-TIMEFRAMES = list(_TIMEFRAME_MAP.keys())
+DEFAULT_WINDOW_DAYS = "365"
+DATE_FORMAT = "%Y-%m-%d"
 
 
 class Dashboard(tk.Tk):
@@ -24,9 +26,9 @@ class Dashboard(tk.Tk):
         self.geometry("1150x700")
 
         self.results_data = {}  # ticker -> prices
-        self.timeframes = {}  # ticker -> timeframe it was fetched with
         self._active_fetches = 0
         self._queue = queue.Queue()
+        self._date_anchor = "end"  # which of start/end drives the window calc
 
         self._build_status_bar()
         self._build_main_area()
@@ -39,8 +41,7 @@ class Dashboard(tk.Tk):
         self.after(100, self._poll_queue)
 
     def _load_saved_portfolio(self):
-        prices, timeframes = load_portfolio()
-        self.timeframes = timeframes
+        prices = load_portfolio()
         for ticker, ticker_prices in prices.items():
             self._add_result_row(ticker, ticker_prices, save=False)
 
@@ -82,16 +83,6 @@ class Dashboard(tk.Tk):
         search_entry.pack(side="left", fill="x", expand=True, ipady=4)
         search_entry.bind("<Return>", self._on_search_enter)
 
-        self.timeframe_var = tk.StringVar(value=TIMEFRAMES[0])
-        timeframe_dropdown = ttk.Combobox(
-            row,
-            textvariable=self.timeframe_var,
-            values=TIMEFRAMES,
-            state="readonly",
-            width=10,
-        )
-        timeframe_dropdown.pack(side="left", padx=(10, 0))
-
     def _build_results_area(self):
         container = tk.Frame(self.left_frame, relief="solid", borderwidth=1)
         container.pack(fill="both", expand=True, padx=15, pady=(0, 15))
@@ -99,9 +90,79 @@ class Dashboard(tk.Tk):
         self.results_frame = tk.Frame(container)
         self.results_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
+    def _build_window_controls(self):
+        row = tk.Frame(self.right_frame)
+        row.pack(fill="x", padx=(0, 15), pady=(15, 0))
+
+        tk.Label(row, text="Window (days):").pack(side="left")
+        self.window_days_var = tk.StringVar(value=DEFAULT_WINDOW_DAYS)
+        window_entry = tk.Entry(row, textvariable=self.window_days_var, width=6)
+        window_entry.pack(side="left", padx=(4, 12))
+        window_entry.bind("<Return>", self._on_window_days_enter)
+
+        tk.Label(row, text="Start:").pack(side="left")
+        self.start_date_var = tk.StringVar()
+        start_entry = tk.Entry(row, textvariable=self.start_date_var, width=10)
+        start_entry.pack(side="left", padx=(4, 12))
+        start_entry.bind("<Return>", self._on_start_date_enter)
+
+        tk.Label(row, text="End:").pack(side="left")
+        self.end_date_var = tk.StringVar()
+        end_entry = tk.Entry(row, textvariable=self.end_date_var, width=10)
+        end_entry.pack(side="left", padx=(4, 0))
+        end_entry.bind("<Return>", self._on_end_date_enter)
+
+    def _on_window_days_enter(self, event=None):
+        self._recalculate_window_from_anchor()
+        self._update_analysis()
+
+    def _on_start_date_enter(self, event=None):
+        self._date_anchor = "start"
+        self._recalculate_window_from_anchor()
+        self._update_analysis()
+
+    def _on_end_date_enter(self, event=None):
+        self._date_anchor = "end"
+        self._recalculate_window_from_anchor()
+        self._update_analysis()
+
+    def _recalculate_window_from_anchor(self):
+        """Given N days and one of start/end, fill in the other."""
+        try:
+            days = int(self.window_days_var.get())
+        except ValueError:
+            return
+
+        if self._date_anchor == "start":
+            start_str = self.start_date_var.get().strip()
+            if not start_str:
+                return
+            try:
+                start = pd.Timestamp(start_str)
+            except ValueError:
+                return
+            end = start + pd.Timedelta(days=days)
+        else:
+            end_str = self.end_date_var.get().strip()
+            if end_str:
+                try:
+                    end = pd.Timestamp(end_str)
+                except ValueError:
+                    return
+            elif self.results_data:
+                end = build_returns_df(self.results_data).index.max()
+            else:
+                return
+            start = end - pd.Timedelta(days=days)
+
+        self.start_date_var.set(start.strftime(DATE_FORMAT))
+        self.end_date_var.set(end.strftime(DATE_FORMAT))
+
     def _build_analysis_area(self):
+        self._build_window_controls()
+
         matrix_container = tk.LabelFrame(self.right_frame, text="PCA Loadings")
-        matrix_container.pack(fill="both", expand=True, padx=(0, 15), pady=(15, 10))
+        matrix_container.pack(fill="both", expand=True, padx=(0, 15), pady=(10, 10))
 
         self.matrix_frame = tk.Frame(matrix_container)
         self.matrix_frame.pack(fill="both", expand=True, padx=5, pady=5)
@@ -129,7 +190,12 @@ class Dashboard(tk.Tk):
             return
 
         try:
-            results = run_pca()
+            if not self.start_date_var.get().strip() or not self.end_date_var.get().strip():
+                self._recalculate_window_from_anchor()
+
+            returns_df = build_returns_df(self.results_data)
+            windowed = returns_df.loc[self.start_date_var.get():self.end_date_var.get()]
+            results = run_pca(windowed)
         except Exception as exc:
             message = f"PCA failed: {exc}"
             tk.Label(
@@ -219,45 +285,42 @@ class Dashboard(tk.Tk):
         ticker = self.search_var.get().strip().upper()
         if not ticker:
             return
-        timeframe = self.timeframe_var.get()
         self.search_var.set("")
 
         self._active_fetches += 1
         self.status_bar.config(bg=self.STATUS_BUSY_COLOR)
 
         threading.Thread(
-            target=self._fetch_worker, args=(ticker, timeframe), daemon=True
+            target=self._fetch_worker, args=(ticker,), daemon=True
         ).start()
 
-    def _fetch_worker(self, ticker, timeframe):
+    def _fetch_worker(self, ticker):
         try:
-            prices = get_daily_prices(ticker, timeframe)
-            self._queue.put(("success", ticker, timeframe, prices))
+            prices = get_daily_prices(ticker, "all")
+            self._queue.put(("success", ticker, prices))
         except Exception as exc:
-            self._queue.put(("error", ticker, timeframe, str(exc)))
+            self._queue.put(("error", ticker, str(exc)))
 
     def _poll_queue(self):
         try:
             while True:
-                status, ticker, timeframe, payload = self._queue.get_nowait()
+                status, ticker, payload = self._queue.get_nowait()
                 self._active_fetches = max(0, self._active_fetches - 1)
                 if self._active_fetches == 0:
                     self.status_bar.config(bg=self.STATUS_IDLE_COLOR)
 
                 if status == "success":
-                    self._add_result_row(ticker.upper(), payload, timeframe)
+                    self._add_result_row(ticker.upper(), payload)
                 else:
                     messagebox.showerror("Data fetch failed", f"{ticker}: {payload}")
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
 
-    def _add_result_row(self, ticker, prices, timeframe=None, save=True):
+    def _add_result_row(self, ticker, prices, save=True):
         self.results_data[ticker] = prices
-        if timeframe is not None:
-            self.timeframes[ticker] = timeframe
         if save:
-            save_portfolio(self.results_data, self.timeframes)
+            save_portfolio(self.results_data)
 
         row = tk.Frame(self.results_frame)
         row.pack(fill="x", pady=2)
@@ -267,8 +330,7 @@ class Dashboard(tk.Tk):
 
         def on_delete():
             self.results_data.pop(ticker, None)
-            self.timeframes.pop(ticker, None)
-            save_portfolio(self.results_data, self.timeframes)
+            save_portfolio(self.results_data)
             row.destroy()
             self._update_analysis()
 
